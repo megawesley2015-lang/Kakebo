@@ -49,10 +49,10 @@ export default function Sidebar({ userEmail, healthPct=0, patrimoniTotal=0, divi
         <div className="text-[8px] text-muted tracking-[2px] uppercase font-bold px-2 mb-2">Controle</div>
         {nav.filter(n => n.section === "controle").map(n => (
           <Link key={n.href} href={n.href}
-            className={\`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[11px] font-bold tracking-wide mb-0.5 transition-all
-              \${pathname === n.href
+            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[11px] font-bold tracking-wide mb-0.5 transition-all
+              ${pathname === n.href
                 ? "bg-violet/15 text-violet-l border border-violet/25"
-                : "text-muted hover:bg-violet/10 hover:text-violet-l"}\`}>
+                : "text-muted hover:bg-violet/10 hover:text-violet-l"}`}>
             <span className="text-sm w-5 text-center">{n.icon}</span>
             <span>{n.label}</span>
           </Link>
@@ -64,10 +64,10 @@ export default function Sidebar({ userEmail, healthPct=0, patrimoniTotal=0, divi
         <div className="text-[8px] text-muted tracking-[2px] uppercase font-bold px-2 mb-2">Investimentos</div>
         {nav.filter(n => n.section === "invest").map(n => (
           <Link key={n.href} href={n.href}
-            className={\`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[11px] font-bold tracking-wide mb-0.5 transition-all
-              \${pathname === n.href || (n.href !== "/" && pathname.startsWith(n.href))
+            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[11px] font-bold tracking-wide mb-0.5 transition-all
+              ${pathname === n.href || (n.href !== "/" && pathname.startsWith(n.href))
                 ? "bg-amber-500/15 text-amber-400 border border-amber-500/25"
-                : "text-muted hover:bg-amber-500/10 hover:text-amber-400"}\`}>
+                : "text-muted hover:bg-amber-500/10 hover:text-amber-400"}`}>
             <span className="text-sm w-5 text-center">{n.icon}</span>
             <span>{n.label}</span>
           </Link>
@@ -83,7 +83,7 @@ export default function Sidebar({ userEmail, healthPct=0, patrimoniTotal=0, divi
           <div className="text-[8px] text-muted tracking-[2px] uppercase mb-1">Saúde Financeira</div>
           <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
             <div className="h-full rounded-full bg-gradient-to-r from-rose via-amber to-teal transition-all duration-700"
-              style={{ width: \`\${healthPct}%\` }} />
+              style={{ width: `${healthPct}%` }} />
           </div>
           <div className="text-xs font-bold text-teal mt-1">{healthPct.toFixed(0)}%</div>
         </div>
@@ -97,7 +97,7 @@ export default function Sidebar({ userEmail, healthPct=0, patrimoniTotal=0, divi
           </div>
           <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
             <div className="h-full rounded-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-700"
-              style={{ width: \`\${progDiv}%\` }} />
+              style={{ width: `${progDiv}%` }} />
           </div>
           <div className="text-[9px] text-amber-400/70 mt-1">{progDiv.toFixed(1)}% da meta</div>
         </div>
