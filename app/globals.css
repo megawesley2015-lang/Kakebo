@@ -20,7 +20,7 @@ body { background:#07060f; color:#e2e8f0; font-family:'JetBrains Mono',monospace
   .card { @apply bg-[#0f0e1a] border border-white/[.06] rounded-2xl p-5; }
   .btn-primary { @apply bg-violet text-white font-bold text-xs tracking-wider px-4 py-2.5 rounded-lg hover:bg-[#6b5ef7] transition-all cursor-pointer border-none; }
   .btn-ghost { @apply bg-[#161525] text-[#64748b] border border-white/[.06] font-bold text-xs px-4 py-2.5 rounded-lg hover:text-white hover:border-violet transition-all cursor-pointer; }
-  .btn-gold { @apply text-[#f59e0b] border border-amber-500/20 font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-amber-500/20 transition-all cursor-pointer; }
+  .btn-gold { @apply text-[#f59e0b] border border-amber/20 font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-amber/20 transition-all cursor-pointer; }
   .btn-danger { @apply text-[#f87171] border border-red-400/20 font-bold text-xs px-4 py-2.5 rounded-lg hover:bg-red-400/10 transition-all cursor-pointer; }
   .input { @apply w-full bg-[#161525] border border-white/[.06] rounded-lg text-white font-mono text-xs px-3 py-2.5 outline-none focus:border-violet transition-colors; }
   .label { @apply block text-[9px] tracking-[.15em] uppercase text-[#64748b] font-bold mb-1.5; }
