@@ -1,6 +1,7 @@
 "use client";
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
