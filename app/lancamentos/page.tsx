@@ -1,34 +1,40 @@
-
 "use client";
+
+export const dynamic = 'force-dynamic';
+
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Sidebar from "@/components/Sidebar";
 import { brl, calcDividendoMensal } from "@/lib/dividends";
-import type { Lancamento, Ativo, Meta, Config } from "@/types";
+import type { Lancamento, Ativo } from "@/types";
 
-const MESES = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-const CATS  = ["Gastos Gerais","Cartão de Crédito","Assinatura","Renda Extra","Outro"];
-const CAT_COLOR: Record<string,string> = {
-  "Gastos Gerais":     "#7c6af7",
-  "Cartão de Crédito": "#fbbf24",
-  "Assinatura":        "#34d399",
-  "Renda Extra":       "#34d399",
-};
+const CATS_GASTO = ["Gastos Gerais", "Cartão de Crédito", "Assinatura", "Outro"];
+const CATS_TODAS = [...CATS_GASTO, "Renda Extra"];
+const CATS_PARCELAVEL = ["Gastos Gerais", "Cartão de Crédito", "Assinatura"];
+const MESES_A = ["","Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+const MESES_F = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 export default function Lancamentos() {
-  const [user, setUser]       = useState<any>(null);
-  const [lancs, setLancs]     = useState<Lancamento[]>([]);
-  const [ativos, setAtivos]   = useState<Ativo[]>([]);
-  const [metas, setMetas]     = useState<Meta[]>([]);
-  const [config, setConfig]   = useState<Config>({ salario: 600 });
+  const [user, setUser] = useState<any>(null);
+  const [lancs, setLancs] = useState<Lancamento[]>([]);
+  const [ativos, setAtivos] = useState<Ativo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mesFiltro, setMesFiltro] = useState(new Date().getMonth() + 1);
   const [showModal, setShowModal] = useState(false);
-  const [editLanc, setEditLanc]   = useState<Lancamento | null>(null);
-  const [filterMes, setFilterMes] = useState("");
-  const [filterCat, setFilterCat] = useState("");
-  const [filterSt,  setFilterSt]  = useState("");
-  const [search,    setSearch]    = useState("");
+  const [deletingLanc, setDeletingLanc] = useState<Lancamento | null>(null);
+
+  // Form state
+  const [form, setForm] = useState({
+    cat: "Gastos Gerais",
+    descricao: "",
+    valor: "",
+    status: "Pendente" as "Pago" | "Pendente",
+    parcelar: false,
+    parcelas: "2",
+    mesInicio: new Date().getMonth() + 1,
+  });
+
   const router = useRouter();
   const sb = createClient();
 
@@ -36,216 +42,429 @@ export default function Lancamentos() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) { router.push("/auth"); return; }
     setUser(user);
-    const [l, a, m, cfg] = await Promise.all([
-      sb.from("lancamentos").select("*").eq("user_id", user.id),
+    const [l, a] = await Promise.all([
+      sb.from("lancamentos").select("*").eq("user_id", user.id)
+        .order("ano", { ascending: false })
+        .order("mes", { ascending: false })
+        .order("id", { ascending: false }),
       sb.from("ativos").select("*").eq("user_id", user.id),
-      sb.from("metas").select("*").eq("user_id", user.id),
-      sb.from("config").select("*").eq("user_id", user.id).maybeSingle(),
     ]);
     setLancs(l.data || []);
     setAtivos(a.data || []);
-    setMetas(m.data || []);
-    if (cfg.data) setConfig({ salario: Number(cfg.data.salario) });
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  async function salvar(form: Partial<Lancamento>) {
-    const uid = user?.id;
-    const data = { user_id: uid, mes: form.mes, cat: form.cat, descricao: form.descricao, valor: form.valor, status: form.status, ano: form.ano || new Date().getFullYear(), obs: form.obs || "" };
-    if (editLanc) {
-      await sb.from("lancamentos").update(data).eq("id", editLanc.id);
+  function gerarUUID(): string {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  async function salvarLancamento() {
+    if (!form.descricao || !form.valor) return;
+    const ano = new Date().getFullYear();
+    const valorParcela = Number(form.valor);
+
+    if (!form.parcelar || !CATS_PARCELAVEL.includes(form.cat)) {
+      await sb.from("lancamentos").insert({
+        user_id: user.id,
+        mes: form.mesInicio,
+        ano,
+        cat: form.cat,
+        descricao: form.descricao,
+        valor: valorParcela,
+        status: form.status,
+      });
     } else {
-      await sb.from("lancamentos").insert(data);
+      const totalParcelas = Math.max(2, Math.min(60, Number(form.parcelas) || 2));
+      const compraId = gerarUUID();
+      const registros = [];
+      for (let i = 0; i < totalParcelas; i++) {
+        const mesAtual = form.mesInicio + i;
+        const mes = ((mesAtual - 1) % 12) + 1;
+        const anoParcela = ano + Math.floor((mesAtual - 1) / 12);
+        registros.push({
+          user_id: user.id,
+          mes,
+          ano: anoParcela,
+          cat: form.cat,
+          descricao: `${form.descricao} (${i + 1}/${totalParcelas})`,
+          valor: valorParcela,
+          status: i === 0 ? form.status : "Pendente",
+          compra_id: compraId,
+          parcela_num: i + 1,
+          parcelas_total: totalParcelas,
+        });
+      }
+      await sb.from("lancamentos").insert(registros);
     }
-    setShowModal(false); setEditLanc(null);
+
+    setShowModal(false);
+    resetForm();
     await load();
   }
 
-  async function excluir(id: number) {
-    if (!confirm("Excluir este lançamento?")) return;
-    await sb.from("lancamentos").delete().eq("id", id);
+  function resetForm() {
+    setForm({
+      cat: "Gastos Gerais",
+      descricao: "",
+      valor: "",
+      status: "Pendente",
+      parcelar: false,
+      parcelas: "2",
+      mesInicio: new Date().getMonth() + 1,
+    });
+  }
+
+  async function toggleStatus(l: Lancamento) {
+    const novoStatus = l.status === "Pago" ? "Pendente" : "Pago";
+    await sb.from("lancamentos").update({ status: novoStatus }).eq("id", l.id);
     await load();
   }
 
-  if (loading) return <div className="min-h-screen bg-bg flex items-center justify-center"><div className="text-violet-l animate-pulse">Carregando...</div></div>;
+  async function excluirSoEsta() {
+    if (!deletingLanc) return;
+    await sb.from("lancamentos").delete().eq("id", deletingLanc.id);
+    setDeletingLanc(null);
+    await load();
+  }
 
-  const sal = config.salario;
-  const receita = sal * 12 + lancs.filter(l => l.cat === "Renda Extra").reduce((s,l) => s + Number(l.valor), 0);
-  const gasto   = lancs.filter(l => l.cat !== "Renda Extra").reduce((s,l) => s + Number(l.valor), 0);
-  const saldo   = receita - gasto;
-  const divMensal  = calcDividendoMensal(ativos);
-  const metaDiv    = metas.find(m => m.nome.toLowerCase().includes("dividendo"))?.objetivo || 100;
-  const healthPct  = receita > 0 ? Math.min(100, (saldo/receita)*100) : 0;
-  const patrimonio = ativos.reduce((s,a) => s + Number(a.atual), 0);
+  async function excluirTodasRestantes() {
+    if (!deletingLanc || !deletingLanc.compra_id) return;
+    await sb.from("lancamentos")
+      .delete()
+      .eq("compra_id", deletingLanc.compra_id)
+      .gte("parcela_num", deletingLanc.parcela_num || 0);
+    setDeletingLanc(null);
+    await load();
+  }
 
-  const list = lancs.filter(l => {
-    if (filterMes && String(l.mes) !== filterMes) return false;
-    if (filterCat && l.cat !== filterCat) return false;
-    if (filterSt  && l.status !== filterSt) return false;
-    if (search && !l.descricao.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  }).sort((a,b) => a.mes - b.mes);
+  async function excluirTodoGrupo() {
+    if (!deletingLanc || !deletingLanc.compra_id) return;
+    await sb.from("lancamentos").delete().eq("compra_id", deletingLanc.compra_id);
+    setDeletingLanc(null);
+    await load();
+  }
 
-  const totalFiltrado = list.reduce((s,l) => s + Number(l.valor), 0);
-  const pagoFiltrado  = list.filter(l => l.status === "Pago").reduce((s,l) => s + Number(l.valor), 0);
+  if (loading) return (
+    <div className="min-h-screen bg-bg flex items-center justify-center">
+      <div className="text-violet-l animate-pulse">Carregando...</div>
+    </div>
+  );
+
+  const divMensal = calcDividendoMensal(ativos);
+  const patrimonio = ativos.reduce((s, a) => s + Number(a.atual), 0);
+
+  const lancsFiltrados = lancs.filter(l => l.mes === mesFiltro);
+  const totalMes = lancsFiltrados.filter(l => l.cat !== "Renda Extra").reduce((s, l) => s + Number(l.valor), 0);
+  const totalRenda = lancsFiltrados.filter(l => l.cat === "Renda Extra").reduce((s, l) => s + Number(l.valor), 0);
+
+  const parcelasPreview = form.parcelar && CATS_PARCELAVEL.includes(form.cat) && form.valor
+    ? Array.from({ length: Math.max(2, Math.min(60, Number(form.parcelas) || 2)) }, (_, i) => {
+        const mesAtual = form.mesInicio + i;
+        const mes = ((mesAtual - 1) % 12) + 1;
+        return MESES_A[mes];
+      })
+    : [];
 
   return (
     <div className="flex bg-bg min-h-screen">
-      <Sidebar userEmail={user?.email} healthPct={healthPct} patrimoniTotal={patrimonio} dividendoMensal={divMensal} metaDividendo={metaDiv} />
+      <Sidebar userEmail={user?.email} healthPct={0} patrimoniTotal={patrimonio}
+        dividendoMensal={divMensal} metaDividendo={100} />
       <main className="ml-56 flex-1 p-7">
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="font-display text-2xl font-black text-white">Lançamentos</h1>
-            <p className="text-muted text-[9px] tracking-[2px] uppercase mt-0.5">{list.length} registros · Total: {brl(totalFiltrado)}</p>
+            <p className="text-muted text-[9px] tracking-[2px] uppercase mt-0.5">
+              {MESES_F[mesFiltro]} · {lancsFiltrados.length} itens · Total: {brl(totalMes)}
+              {totalRenda > 0 && ` · Renda extra: +${brl(totalRenda)}`}
+            </p>
           </div>
-          <button onClick={() => { setEditLanc(null); setShowModal(true); }} className="bg-violet text-white text-xs font-bold px-4 py-2.5 rounded-lg hover:bg-violet-600 transition-all border-none cursor-pointer">
-            ＋ Novo Lançamento
-          </button>
+          <div className="flex items-center gap-3">
+            <select className="input w-40" value={mesFiltro} onChange={e => setMesFiltro(+e.target.value)}>
+              {MESES_F.slice(1).map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select>
+            <button onClick={() => setShowModal(true)}
+              className="bg-violet text-white text-xs font-bold px-5 py-2.5 rounded-lg border-none cursor-pointer hover:opacity-90 transition-all">
+              ＋ Novo Lançamento
+            </button>
+          </div>
         </div>
 
-        {/* KPIs rápidos */}
-        <div className="grid grid-cols-3 gap-3 mb-5">
-          {[
-            { l:"Receita Anual", v: brl(receita), c:"#34d399" },
-            { l:"Total Gasto",   v: brl(gasto),   c:"#fbbf24" },
-            { l:"Saldo",         v: brl(saldo),   c: saldo>=0 ? "#7c6af7" : "#f87171" },
-          ].map((k,i) => (
-            <div key={i} className="card">
-              <div className="text-[9px] uppercase tracking-[2px] mb-1" style={{color:k.c}}>{k.l}</div>
-              <div className="font-display text-lg font-bold" style={{color:k.c}}>{k.v}</div>
-            </div>
-          ))}
-        </div>
-
+        {/* Lista de lançamentos */}
         <div className="card">
-          {/* Filtros */}
-          <div className="flex gap-2 mb-4 flex-wrap">
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-xs">🔍</span>
-              <input className="input pl-8 w-48" placeholder="Buscar..." value={search} onChange={e => setSearch(e.target.value)} />
+          {lancsFiltrados.length === 0 ? (
+            <div className="text-center py-10 text-muted text-xs">
+              Nenhum lançamento em {MESES_F[mesFiltro]}.
+              {" "}
+              <button onClick={() => setShowModal(true)}
+                className="text-violet-l hover:underline bg-transparent border-none cursor-pointer">
+                Criar primeiro →
+              </button>
             </div>
-            <select className="input w-36" value={filterMes} onChange={e => setFilterMes(e.target.value)}>
-              <option value="">Todos os meses</option>
-              {MESES.slice(1).map((m,i) => <option key={i} value={i+1}>{m}</option>)}
-            </select>
-            <select className="input w-44" value={filterCat} onChange={e => setFilterCat(e.target.value)}>
-              <option value="">Todas categorias</option>
-              {CATS.map(c => <option key={c}>{c}</option>)}
-            </select>
-            <select className="input w-32" value={filterSt} onChange={e => setFilterSt(e.target.value)}>
-              <option value="">Todos status</option>
-              <option>Pago</option><option>Pendente</option>
-            </select>
-            {(filterMes||filterCat||filterSt||search) && (
-              <button onClick={() => { setFilterMes(""); setFilterCat(""); setFilterSt(""); setSearch(""); }}
-                className="text-xs text-muted hover:text-rose bg-transparent border-none cursor-pointer">✕ Limpar</button>
-            )}
-            {list.length > 0 && (
-              <div className="ml-auto flex items-center gap-3 text-xs text-muted">
-                <span>Pago: <strong className="text-teal">{brl(pagoFiltrado)}</strong></span>
-                <span>Pendente: <strong className="text-amber">{brl(totalFiltrado - pagoFiltrado)}</strong></span>
-              </div>
-            )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-white/[.06]">
-                  {["Mês","Categoria","Descrição","Valor","Status","Ações"].map(h => (
-                    <th key={h} className="text-left py-2.5 px-3 text-[9px] uppercase tracking-[1.5px] text-muted font-bold">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {list.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center py-12 text-muted">
-                    Nenhum lançamento encontrado.{" "}
-                    <button onClick={() => setShowModal(true)} className="text-violet-l bg-transparent border-none cursor-pointer hover:underline">Adicionar agora</button>
-                  </td></tr>
-                ) : list.map(l => {
-                  const cor = CAT_COLOR[l.cat] || "#94a3b8";
-                  return (
-                    <tr key={l.id} className="border-b border-white/[.03] hover:bg-white/[.01] transition-colors">
-                      <td className="py-3 px-3 text-muted">{MESES[l.mes]}</td>
-                      <td className="py-3 px-3">
-                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full"
-                          style={{ background: cor+"18", color: cor }}>{l.cat}</span>
-                      </td>
-                      <td className="py-3 px-3 text-white/80 max-w-[200px] truncate">{l.descricao}</td>
-                      <td className="py-3 px-3 font-bold font-mono">{brl(Number(l.valor))}</td>
-                      <td className="py-3 px-3">
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${l.status === "Pago" ? "bg-teal/10 text-teal" : "bg-amber/10 text-amber"}`}>
-                          {l.status === "Pago" ? "✓ Pago" : "⏳ Pendente"}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="flex gap-2">
-                          <button onClick={() => { setEditLanc(l); setShowModal(true); }}
-                            className="hover:text-violet-l bg-transparent border-none cursor-pointer transition-colors">✏️</button>
-                          <button onClick={() => excluir(l.id)}
-                            className="hover:text-rose bg-transparent border-none cursor-pointer transition-colors">🗑</button>
+          ) : (
+            <div className="space-y-2">
+              {lancsFiltrados.map(l => {
+                const isParcela = !!l.compra_id;
+                const isRenda = l.cat === "Renda Extra";
+                const cor = isRenda ? "#34d399" : l.status === "Pago" ? "#94a3b8" : "#fbbf24";
+                return (
+                  <div key={l.id} className="flex items-center justify-between p-3 rounded-xl"
+                    style={{
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.06)"
+                    }}>
+                    <div className="flex items-center gap-3 flex-1">
+                      <button onClick={() => toggleStatus(l)}
+                        disabled={isRenda}
+                        className="w-5 h-5 rounded-md border cursor-pointer flex items-center justify-center text-[10px] font-bold transition-all"
+                        style={{
+                          borderColor: l.status === "Pago" ? "#34d399" : "rgba(255,255,255,0.2)",
+                          background: l.status === "Pago" ? "rgba(52,211,153,0.15)" : "transparent",
+                          color: l.status === "Pago" ? "#34d399" : "transparent",
+                          opacity: isRenda ? 0.4 : 1,
+                          cursor: isRenda ? "default" : "pointer",
+                        }}>
+                        ✓
+                      </button>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-sm">{l.descricao}</span>
+                          {isParcela && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                              style={{ background: "rgba(124,106,247,0.15)", color: "#a89ef7" }}>
+                              🔗 parcelado
+                            </span>
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        <div className="text-[9px] text-muted flex items-center gap-2">
+                          <span>{l.cat}</span>
+                          <span>·</span>
+                          <span style={{ color: cor }}>{l.status}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="font-display font-bold text-base"
+                        style={{ color: isRenda ? "#34d399" : "#e2e8f0" }}>
+                        {isRenda ? "+" : ""}{brl(Number(l.valor))}
+                      </div>
+                      <button onClick={() => setDeletingLanc(l)}
+                        className="text-rose hover:opacity-70 bg-transparent border-none cursor-pointer text-xs">
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* Modal */}
+        {/* Modal Novo Lançamento */}
         {showModal && (
           <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-5"
             onClick={e => e.target === e.currentTarget && setShowModal(false)}>
-            <div className="bg-[#0f0e1a] border border-white/[.08] rounded-2xl p-7 w-full max-w-lg">
-              <div className="font-display text-lg font-bold mb-5">{editLanc ? "✏️ Editar" : "＋ Novo Lançamento"}</div>
-              <LancForm lanc={editLanc} onSave={salvar} />
+            <div className="bg-surface border border-white/[.08] rounded-2xl p-7 w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <div className="font-display text-lg font-bold mb-5">＋ Novo Lançamento</div>
+              <div className="space-y-3">
+                <div>
+                  <label className="label">Categoria *</label>
+                  <select className="input" value={form.cat}
+                    onChange={e => setForm(f => ({ ...f, cat: e.target.value, parcelar: false }))}>
+                    {CATS_TODAS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="label">Descrição *</label>
+                  <input className="input" placeholder="Ex: Geladeira Eletro" value={form.descricao}
+                    onChange={e => setForm(f => ({ ...f, descricao: e.target.value }))} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">
+                      Valor {form.parcelar ? "(por parcela)" : ""} *
+                    </label>
+                    <input className="input" type="number" step="0.01" placeholder="0,00"
+                      value={form.valor}
+                      onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="label">Mês {form.parcelar ? "(1ª parcela)" : ""}</label>
+                    <select className="input" value={form.mesInicio}
+                      onChange={e => setForm(f => ({ ...f, mesInicio: +e.target.value }))}>
+                      {MESES_F.slice(1).map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {form.cat !== "Renda Extra" && (
+                  <div>
+                    <label className="label">Status</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["Pendente", "Pago"] as const).map(s => (
+                        <button key={s} onClick={() => setForm(f => ({ ...f, status: s }))}
+                          className="py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                          style={{
+                            background: form.status === s
+                              ? (s === "Pago" ? "rgba(52,211,153,0.15)" : "rgba(251,191,36,0.15)")
+                              : "transparent",
+                            border: `1px solid ${form.status === s
+                              ? (s === "Pago" ? "rgba(52,211,153,0.4)" : "rgba(251,191,36,0.4)")
+                              : "rgba(255,255,255,0.08)"}`,
+                            color: form.status === s
+                              ? (s === "Pago" ? "#34d399" : "#fbbf24")
+                              : "#64748b"
+                          }}>
+                          {s === "Pago" ? "✓ Pago" : "⏳ Pendente"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Parcelamento */}
+                {CATS_PARCELAVEL.includes(form.cat) && (
+                  <div className="pt-2 border-t border-white/[.06]">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.parcelar}
+                        onChange={e => setForm(f => ({ ...f, parcelar: e.target.checked }))}
+                        className="w-4 h-4 cursor-pointer" />
+                      <span className="text-xs font-bold text-violet-l">🔗 Parcelar compra</span>
+                    </label>
+
+                    {form.parcelar && (
+                      <div className="mt-3 p-3 rounded-xl"
+                        style={{ background: "rgba(124,106,247,0.05)", border: "1px solid rgba(124,106,247,0.2)" }}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <label className="label mb-0">Número de parcelas:</label>
+                          <input className="input w-20 text-center font-bold" type="number"
+                            min="2" max="60" value={form.parcelas}
+                            onChange={e => setForm(f => ({ ...f, parcelas: e.target.value }))} />
+                          <span className="text-xs text-muted">vezes</span>
+                        </div>
+
+                        {form.valor && (
+                          <div className="text-xs text-muted mb-2">
+                            Total da compra: <strong className="text-white">
+                              {brl(Number(form.valor) * (Number(form.parcelas) || 2))}
+                            </strong>
+                            {" "}({Number(form.parcelas) || 2}× de {brl(Number(form.valor))})
+                          </div>
+                        )}
+
+                        {parcelasPreview.length > 0 && (
+                          <div>
+                            <div className="text-[9px] text-violet-l uppercase tracking-wider font-bold mb-1">Preview dos meses:</div>
+                            <div className="flex flex-wrap gap-1">
+                              {parcelasPreview.map((mes, i) => (
+                                <span key={i} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                  style={{ background: "rgba(124,106,247,0.15)", color: "#a89ef7" }}>
+                                  {mes} ({i + 1}/{parcelasPreview.length})
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 mt-5 pt-4 border-t border-white/[.06]">
+                <button onClick={() => { setShowModal(false); resetForm(); }}
+                  className="bg-surface2 text-muted text-xs font-bold px-4 py-2.5 rounded-lg cursor-pointer"
+                  style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
+                  Cancelar
+                </button>
+                <button onClick={salvarLancamento}
+                  disabled={!form.descricao || !form.valor}
+                  className="bg-violet text-white text-xs font-bold px-4 py-2.5 rounded-lg border-none cursor-pointer hover:opacity-90 disabled:opacity-50">
+                  💾 {form.parcelar && CATS_PARCELAVEL.includes(form.cat)
+                    ? `Salvar ${Number(form.parcelas) || 2} parcelas`
+                    : "Salvar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Exclusão */}
+        {deletingLanc && (
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-5"
+            onClick={e => e.target === e.currentTarget && setDeletingLanc(null)}>
+            <div className="bg-surface border border-white/[.08] rounded-2xl p-7 w-full max-w-md">
+              <div className="font-display text-lg font-bold mb-3">🗑 Excluir lançamento</div>
+              <div className="text-sm text-white mb-4">
+                <strong>{deletingLanc.descricao}</strong>
+                <div className="text-xs text-muted mt-0.5">
+                  {brl(Number(deletingLanc.valor))} · {MESES_F[deletingLanc.mes]}
+                </div>
+              </div>
+
+              {deletingLanc.compra_id ? (
+                <>
+                  <div className="mb-4 p-3 rounded-xl text-xs"
+                    style={{ background: "rgba(124,106,247,0.05)", border: "1px solid rgba(124,106,247,0.2)" }}>
+                    <div className="text-violet-l font-bold mb-1">🔗 Esta é uma compra parcelada</div>
+                    <div className="text-muted">
+                      Parcela {deletingLanc.parcela_num} de {deletingLanc.parcelas_total}.
+                      Escolha o que excluir:
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <button onClick={excluirSoEsta}
+                      className="w-full py-3 rounded-xl text-xs font-bold cursor-pointer transition-all text-left px-4"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#e2e8f0" }}>
+                      <div>🎯 Só esta parcela</div>
+                      <div className="text-[9px] text-muted font-normal mt-0.5">
+                        As outras {(deletingLanc.parcelas_total || 0) - 1} parcelas continuam
+                      </div>
+                    </button>
+                    <button onClick={excluirTodasRestantes}
+                      className="w-full py-3 rounded-xl text-xs font-bold cursor-pointer transition-all text-left px-4"
+                      style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", color: "#fbbf24" }}>
+                      <div>⏭️ Esta e todas as seguintes</div>
+                      <div className="text-[9px] text-muted font-normal mt-0.5">
+                        Cancela a partir desta parcela ({(deletingLanc.parcelas_total || 0) - (deletingLanc.parcela_num || 0) + 1} parcelas)
+                      </div>
+                    </button>
+                    <button onClick={excluirTodoGrupo}
+                      className="w-full py-3 rounded-xl text-xs font-bold cursor-pointer transition-all text-left px-4"
+                      style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", color: "#f87171" }}>
+                      <div>🗑️ Apagar compra inteira</div>
+                      <div className="text-[9px] text-muted font-normal mt-0.5">
+                        Remove todas as {deletingLanc.parcelas_total} parcelas (inclusive já pagas)
+                      </div>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <button onClick={excluirSoEsta}
+                    className="w-full py-3 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                    style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#f87171" }}>
+                    🗑️ Confirmar exclusão
+                  </button>
+                </div>
+              )}
+              <button onClick={() => setDeletingLanc(null)}
+                className="w-full mt-2 py-2.5 bg-transparent text-muted text-xs font-bold cursor-pointer"
+                style={{ border: "1px solid rgba(255,255,255,0.06)", borderRadius: "0.5rem" }}>
+                Cancelar
+              </button>
             </div>
           </div>
         )}
       </main>
-    </div>
-  );
-}
-
-function LancForm({ lanc, onSave }: { lanc: Lancamento | null; onSave: (f: Partial<Lancamento>) => void }) {
-  const now = new Date();
-  const [f, setF] = useState<Partial<Lancamento>>(lanc || {
-    mes: now.getMonth()+1, cat: "Gastos Gerais", descricao: "", valor: undefined,
-    status: "Pendente", ano: now.getFullYear(), obs: ""
-  });
-  const set = (k: string, v: any) => setF(prev => ({...prev, [k]: v}));
-  const MESES_OPT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div><label className="label">Mês</label>
-          <select className="input" value={f.mes} onChange={e => set("mes", +e.target.value)}>
-            {MESES_OPT.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
-          </select></div>
-        <div><label className="label">Categoria</label>
-          <select className="input" value={f.cat} onChange={e => set("cat", e.target.value)}>
-            {["Gastos Gerais","Cartão de Crédito","Assinatura","Renda Extra","Outro"].map(c => <option key={c}>{c}</option>)}
-          </select></div>
-        <div className="col-span-2"><label className="label">Descrição *</label>
-          <input className="input" placeholder="Ex: Conta de luz, Netflix..." value={f.descricao||""} onChange={e => set("descricao", e.target.value)} /></div>
-        <div><label className="label">Valor (R$) *</label>
-          <input className="input" type="number" step="0.01" min="0" placeholder="0,00" value={f.valor||""} onChange={e => set("valor", +e.target.value)} /></div>
-        <div><label className="label">Status</label>
-          <select className="input" value={f.status} onChange={e => set("status", e.target.value)}>
-            <option>Pendente</option><option>Pago</option>
-          </select></div>
-        <div className="col-span-2"><label className="label">Observação</label>
-          <input className="input" placeholder="Opcional..." value={f.obs||""} onChange={e => set("obs", e.target.value)} /></div>
-      </div>
-      <div className="flex justify-end gap-2 pt-3 border-t border-white/[.06]">
-        <button className="bg-violet text-white text-xs font-bold px-4 py-2.5 rounded-lg hover:bg-violet-600 border-none cursor-pointer"
-          onClick={() => onSave(f)}>💾 Salvar</button>
-      </div>
     </div>
   );
 }

@@ -1,43 +1,46 @@
-import type { Ativo, Meta } from '@/types';
+import type { Ativo } from "@/types";
 
-/** Calcula dividendo mensal total da carteira */
+export function brl(v: number): string {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency", currency: "BRL",
+  }).format(Number(v) || 0);
+}
+
 export function calcDividendoMensal(ativos: Ativo[]): number {
-  return ativos.reduce((sum, a) => sum + (a.cotas * a.dpa), 0);
+  return ativos.reduce((sum, a) => sum + Number(a.cotas) * Number(a.dpa), 0);
 }
 
-/** Calcula progresso da meta de dividendos (%) */
-export function calcProgressoMeta(dividendoAtual: number, meta: Meta): number {
-  if (meta.objetivo <= 0) return 0;
-  return Math.min(100, (dividendoAtual / meta.objetivo) * 100);
+export function calcProgressoMeta(divAtual: number, meta: number): number {
+  if (!meta || meta <= 0) return 0;
+  return Math.min(100, (divAtual / meta) * 100);
 }
 
-/** Projeta quantos meses para atingir a meta com aporte mensal */
 export function calcMesesParaMeta(
-  dividendoAtual: number,
-  metaObjetivo: number,
-  aporteMensal: number,
+  divAtual: number,
+  metaObj: number,
+  aporteMes: number,
   ativos: Ativo[]
 ): number {
-  if (dividendoAtual >= metaObjetivo) return 0;
-  if (aporteMensal <= 0) return 999;
+  if (divAtual >= metaObj) return 0;
+  if (aporteMes <= 0) return 999;
 
-  // Ordena ativos por DY para simular compra inteligente
-  const sorted = [...ativos].filter(a => a.cotacao > 0 && a.dy > 0)
-    .sort((a, b) => b.dy - a.dy);
-  if (!sorted.length) return 999;
+  const candidatos = [...ativos]
+    .filter(a => Number(a.cotacao) > 0 && Number(a.dpa) > 0)
+    .sort((a, b) => Number(b.dy) - Number(a.dy));
 
-  let divAtual = dividendoAtual;
+  if (candidatos.length === 0) return 999;
+
+  let divSimulado = divAtual;
   let meses = 0;
+  const maxMeses = 240;
 
-  while (divAtual < metaObjetivo && meses < 120) {
-    const melhor = sorted[meses % sorted.length];
-    const cotasCompradas = aporteMensal / melhor.cotacao;
-    divAtual += cotasCompradas * melhor.dpa;
+  while (divSimulado < metaObj && meses < maxMeses) {
+    const melhor = candidatos[0];
+    const cotasCompradas = Math.floor(aporteMes / Number(melhor.cotacao));
+    if (cotasCompradas <= 0) break;
+    divSimulado += cotasCompradas * Number(melhor.dpa);
     meses++;
   }
-  return meses;
-}
 
-/** Formata valor em BRL */
-export const brl = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0);
+  return meses >= maxMeses ? 999 : meses;
+}
